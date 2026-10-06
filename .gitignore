@@ -1,0 +1,19 @@
+﻿# 构建产物
+build/
+.gradle/
+.cxx/
+.kotlin/
+.idea/
+*.iml
+local.properties
+
+# 不要提交的东西
+*.apk
+*.apks
+*.dex
+*.so
+!gradle/wrapper/gradle-wrapper.jar
+
+# 系统
+.DS_Store
+Thumbs.db

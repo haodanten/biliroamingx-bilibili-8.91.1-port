@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: 'recursive'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle/*.versions.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Set version
+        run: |
+          version=`awk -F "=" '$1 == "version" {print $2}' gradle.properties`
+          commit_count=`git rev-list HEAD --count`
+          version="${version}.r${commit_count}"
+          echo "VERSION=$version" >> $GITHUB_ENV
+
+      # 使用 Actions 自动生成的临时 token, 不传 secrets.GH_PAT (见 ci.yml 注释)。
+      - name: Run unit tests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./gradlew --no-daemon -Dorg.gradle.jvmargs=-Xmx2g \
+            -Pversion=$VERSION \
+            test
+
+      - name: Build patches + integrations + Manager
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./gradlew --no-daemon -Dorg.gradle.jvmargs=-Xmx2g \
+            -Pversion=$VERSION \
+            dist :manager:assembleRelease
+
+      # 从 dist 的同步目录 (build/) 取产物, 而不是模块中间目录:
+      # dist 的 doLast 会把 integrations.apk 里的 lib/*.so 注入到 build/ 下的 patches jar,
+      # 模块目录 patches/build/libs/ 里那份是没有原生库的残件。
+      - name: Collect release artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp build/*.jar release-assets/
+          cp build/*.apk release-assets/
+          cp manager/build/outputs/apk/release/*.apk release-assets/
+          ls -l release-assets
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: BiliRoamingX-AI ${{ env.VERSION }}
+          body: |
+            ## BiliRoamingX-AI ${{ env.VERSION }}
+
+            基于 [BiliRoamingX](https://github.com/BiliRoamingX/BiliRoamingX)。
+
+            ### 命令行注入
+
+            1. 从本 Release 下载 `BiliRoamingX-AI-patches-*.jar` 与 `BiliRoamingX-AI-app-*.apk`
+            2. 下载 [revanced-cli.jar](https://github.com/zjns/revanced-cli/releases/latest)
+            3. 执行：
+
+            ```shell
+            java -jar revanced-cli.jar patch \
+              --merge BiliRoamingX-AI-app-<版本>.apk \
+              --patch-bundle BiliRoamingX-AI-patches-<版本>.jar \
+              --signing-levels 1,2,3 \
+              bilibili.apk
+            ```
+
+            ### 文件说明
+            - `BiliRoamingX-AI-patches-*.jar` - 补丁包 (已内置 bilibili/ 下的原生库)
+            - `BiliRoamingX-AI-app-*.apk` - 集成模块 (`--merge` 用)
+            - `manager-release.apk` - 手机端操作指引 (不能直接注入)
+
+            ### 上游变更
+            [BiliRoamingX Releases](https://github.com/BiliRoamingX/BiliRoamingX/releases)
+          files: |
+            release-assets/*.jar
+            release-assets/*.apk
+          draft: false
+          prerelease: false
+          generate_release_notes: true

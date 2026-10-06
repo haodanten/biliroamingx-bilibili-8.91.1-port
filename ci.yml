@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle/*.versions.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # 用 Actions 自动生成的临时 token (权限由上面的 permissions 收敛为只读),
+      # 不要传 secrets.GH_PAT: 长期凭据会出现在 Gradle 进程命令行与环境变量里,
+      # 任何构建脚本 / 插件 / 依赖的 build script 都能读走。
+      - name: Run unit tests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew --no-daemon -Dorg.gradle.jvmargs=-Xmx2g test
+
+      - name: Build
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew --no-daemon -Dorg.gradle.jvmargs=-Xmx2g dist :manager:assembleRelease
+
+      - name: Upload Manager APK
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: manager-apk
+          path: 'manager/build/outputs/apk/release/*.apk'
